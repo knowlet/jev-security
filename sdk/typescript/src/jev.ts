@@ -32,7 +32,10 @@ export interface JevChoiceClient {
   ): Promise<Record<string, JevChoiceAnswer>>;
 }
 
-type JevFetch = typeof globalThis.fetch;
+type JevFetch = (
+  input: Parameters<typeof fetch>[0],
+  init?: Parameters<typeof fetch>[1],
+) => ReturnType<typeof fetch>;
 
 interface JevRetryOptions {
   wait?: (delayMs: number, signal?: AbortSignal) => Promise<void>;
@@ -88,10 +91,7 @@ function requiredChoiceAnswer(
   ) {
     throw new CodexSecurityError("Jev returned an invalid Choice answer.");
   }
-  const rawProbabilities = answer["probabilities"] as Record<
-    string,
-    unknown
-  >;
+  const rawProbabilities = answer["probabilities"] as Record<string, unknown>;
   const probabilityLabels = Object.keys(rawProbabilities);
   if (
     probabilityLabels.length !== labels.size ||
@@ -112,7 +112,9 @@ function requiredChoiceAnswer(
       probability < 0 ||
       probability > 1
     ) {
-      throw new CodexSecurityError("Jev returned invalid Choice probabilities.");
+      throw new CodexSecurityError(
+        "Jev returned invalid Choice probabilities.",
+      );
     }
     probabilities[label] = probability;
     total += probability;
@@ -123,10 +125,7 @@ function requiredChoiceAnswer(
       "Jev returned Choice probabilities that do not sum to one.",
     );
   }
-  if (
-    probabilities[answer["choice"]]! + PROBABILITY_EPSILON <
-    maximum
-  ) {
+  if (probabilities[answer["choice"]]! + PROBABILITY_EPSILON < maximum) {
     throw new CodexSecurityError(
       "Jev returned a Choice that is not a maximum-probability action.",
     );
