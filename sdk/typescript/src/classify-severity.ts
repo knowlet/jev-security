@@ -107,12 +107,10 @@ const jevSeverityCriteria = {
     "The supplied classification rubric explicitly excludes this report from severity classification.",
   critical:
     "The rubric supports its Critical, Urgent, or equivalent highest-severity class after applying the evidenced prerequisites, boundary crossed, and unauthorized harm.",
-  high:
-    "The rubric supports its High or equivalent high-severity class after applying the evidenced prerequisites, boundary crossed, and unauthorized harm.",
+  high: "The rubric supports its High or equivalent high-severity class after applying the evidenced prerequisites, boundary crossed, and unauthorized harm.",
   medium:
     "The rubric supports its Medium, Moderate, or equivalent middle-severity class after applying the evidenced prerequisites, boundary crossed, and unauthorized harm.",
-  low:
-    "The rubric supports its Low or equivalent low-severity class after applying the evidenced prerequisites, boundary crossed, and unauthorized harm.",
+  low: "The rubric supports its Low or equivalent low-severity class after applying the evidenced prerequisites, boundary crossed, and unauthorized harm.",
   informational:
     "The rubric supports its Informational or equivalent non-impacting informational class.",
   review:
@@ -120,12 +118,10 @@ const jevSeverityCriteria = {
 } as const;
 
 const jevConfidenceCriteria = {
-  high:
-    "The supplied report, rubric, and context support a classification clearly, with no material ambiguity or missing fact likely to change the severity.",
+  high: "The supplied report, rubric, and context support a classification clearly, with no material ambiguity or missing fact likely to change the severity.",
   medium:
     "The classification is supported, but there is meaningful uncertainty or missing context that could plausibly change the severity.",
-  low:
-    "The classification is tentative because material evidence or context is missing or ambiguous, but there is still enough information to choose a severity; use the severity review option instead when a defensible level cannot be chosen.",
+  low: "The classification is tentative because material evidence or context is missing or ambiguous, but there is still enough information to choose a severity; use the severity review option instead when a defensible level cannot be chosen.",
 } as const;
 
 type JevSeverityDecision = Pick<
@@ -182,13 +178,9 @@ async function tryJevSeverityDecision(
     return { decision: "excluded", level: null, confidence: null };
   }
   const level = levelSchema.safeParse(choice);
-  const confidence = confidenceSchema.safeParse(
-    answers["confidence"]?.choice,
-  );
+  const confidence = confidenceSchema.safeParse(answers["confidence"]?.choice);
   if (!level.success || !confidence.success) {
-    throw new CodexSecurityError(
-      "Jev returned an invalid severity decision.",
-    );
+    throw new CodexSecurityError("Jev returned an invalid severity decision.");
   }
   return {
     decision: "assessed",

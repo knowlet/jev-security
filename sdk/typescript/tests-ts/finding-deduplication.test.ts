@@ -177,25 +177,22 @@ test("Jev screening failures fail without Luna fallback", async () => {
 test("REVIEW screening candidates continue to source-grounded pair review", async () => {
   const findings = [entry(1), entry(2)];
   let pairReviews = 0;
-  const result = await new FindingDeduplicator(
-    candidates(findings),
-    {
-      async screen() {
-        return {
-          decisions: {
-            "pair-1": {
-              decision: "REVIEW",
-              rationale: "Source-grounded review is required.",
-            },
+  const result = await new FindingDeduplicator(candidates(findings), {
+    async screen() {
+      return {
+        decisions: {
+          "pair-1": {
+            decision: "REVIEW",
+            rationale: "Source-grounded review is required.",
           },
-        };
-      },
-      async reviewPair(assigned) {
-        pairReviews++;
-        return same(assigned);
-      },
+        },
+      };
     },
-  ).run([findings[0]!.findingId]);
+    async reviewPair(assigned) {
+      pairReviews++;
+      return same(assigned);
+    },
+  }).run([findings[0]!.findingId]);
   expect(pairReviews).toBe(1);
   expect(result.duplicateGroups).toEqual([
     [findings[0]!.findingId, findings[1]!.findingId],

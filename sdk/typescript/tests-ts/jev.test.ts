@@ -1,8 +1,5 @@
 import { expect, test } from "bun:test";
-import {
-  createJevChoiceClient,
-  DEFAULT_JEV_MODEL,
-} from "../src/jev.js";
+import { createJevChoiceClient, DEFAULT_JEV_MODEL } from "../src/jev.js";
 
 test("Jev client is disabled without TypeSafe credentials", () => {
   expect(createJevChoiceClient({})).toBeUndefined();
@@ -259,17 +256,20 @@ test.each([
       confidence: 0.9,
     },
   ],
-] as const)("rejects inconsistent Choice response: %s", async (_name, answer) => {
-  const client = await choiceResponse(answer);
-  await expect(
-    client.choose("state", {
-      route: {
-        instructions: "Choose a route.",
-        criteria: { fast: "Fast path", review: "System-2" },
-      },
-    }),
-  ).rejects.toThrow("Jev returned");
-});
+] as const)(
+  "rejects inconsistent Choice response: %s",
+  async (_name, answer) => {
+    const client = await choiceResponse(answer);
+    await expect(
+      client.choose("state", {
+        route: {
+          instructions: "Choose a route.",
+          criteria: { fast: "Fast path", review: "System-2" },
+        },
+      }),
+    ).rejects.toThrow("Jev returned");
+  },
+);
 
 test("accepts a tied maximum Choice distribution", async () => {
   const client = await choiceResponse({

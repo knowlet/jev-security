@@ -155,8 +155,7 @@ function screeningToolSchema(neighborCount: number): object {
 }
 
 const jevScreeningCriteria = {
-  SAME:
-    "The pair plausibly describes the same actionable finding: one concrete, behavior-preserving correction to the same security decision or boundary can close both complete reported paths.",
+  SAME: "The pair plausibly describes the same actionable finding: one concrete, behavior-preserving correction to the same security decision or boundary can close both complete reported paths.",
   DISTINCT:
     "The pair is clearly distinct: at least one independently vulnerable control, attack path, impact, or required correction survives the other's remediation.",
   REVIEW:
@@ -173,7 +172,9 @@ interface JevScreeningRequest {
   questions: Readonly<Record<string, JevChoiceQuestion>>;
 }
 
-function jevScreeningRequest(findings: readonly Finding[]): JevScreeningRequest {
+function jevScreeningRequest(
+  findings: readonly Finding[],
+): JevScreeningRequest {
   const anchor = findings[0];
   if (anchor === undefined) return { state: null, questions: {} };
   return {
