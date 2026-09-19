@@ -47,7 +47,8 @@ export async function reviewSettingsDigest(
   return workflowDigest({
     configs,
     command: resolveCodexCommand(environment),
-    baseUrl:\n      environmentEntry(environment, "OPENAI_BASE_URL")?.trim() || undefined,
+    baseUrl:
+      environmentEntry(environment, "OPENAI_BASE_URL")?.trim() || undefined,
   });
 }
 
@@ -103,10 +104,8 @@ export class CheckpointedReviewRunner {
       ]),
       contractDigest: workflowDigest(review.schema),
     };
-    return await this.runCheckpoint(
-      binding,
-      review.validate,
-      () => this.runner.run(review),
+    return await this.runCheckpoint(binding, review.validate, () =>
+      this.runner.run(review),
     );
   }
 
