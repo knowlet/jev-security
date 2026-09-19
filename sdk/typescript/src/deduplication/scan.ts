@@ -21,6 +21,7 @@ import {
 } from "./deduplication-reviewer.js";
 import { FindingsClient, type FindingsRequest } from "../findings-client.js";
 import type { FindingSearchScope } from "../finding-retrieval.js";
+import { createJevChoiceClient } from "../jev.js";
 import {
   FindingWorkflow,
   workflowDestination,
@@ -244,7 +245,10 @@ async function deduplicateResolvedScan(
           client.potentialDuplicates(findingId, scope),
       },
       dependencies.reviewer ??
-        new CodexDeduplicationReviewer(checkpoints ?? runner),
+        new CodexDeduplicationReviewer(
+          checkpoints ?? runner,
+          createJevChoiceClient(environment, options.signal),
+        ),
       options.signal,
       options.concurrency,
     );

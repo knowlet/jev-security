@@ -3811,9 +3811,9 @@ export async function main(
           ),
         model: optionValue("--model")
           .optional()
-          .describe("Model for rubric classification."),
+          .describe("Codex model for explanation and System-2 fallback."),
         effort: effortOption().describe(
-          "Classification reasoning effort (default: medium).",
+          "Codex explanation/fallback reasoning effort (default: medium).",
         ),
       }),
       output: z.record(z.string(), z.unknown()).optional(),

@@ -7009,8 +7009,10 @@ if ([basename(process.argv[1]), ...process.argv.slice(2)].join(" ") !== "login s
     await mkdir(scanDir, { mode: 0o700 });
     const environment: Record<string, string | undefined> = {
       OPENAI_API_KEY: "first-key",
+      OPENAI_BASE_URL: "https://first-compatible.example/v1",
     };
     const selectedKeys: Array<string | undefined> = [];
+    const selectedBaseUrls: Array<string | undefined> = [];
     const client = new TestClient(
       {},
       {
@@ -7024,6 +7026,7 @@ if ([basename(process.argv[1]), ...process.argv.slice(2)].join(" ") !== "login s
         repositoryRevision: async () => "deadbeef",
         createCodex: (options: CodexOptions) => {
           selectedKeys.push(options.apiKey);
+          selectedBaseUrls.push(options.baseUrl);
           throw new Error("scan reached");
         },
       },
@@ -7031,9 +7034,14 @@ if ([basename(process.argv[1]), ...process.argv.slice(2)].join(" ") !== "login s
 
     await expect(client.run(repository)).rejects.toThrow("scan reached");
     environment["OPENAI_API_KEY"] = "second-key";
+    environment["OPENAI_BASE_URL"] = "https://second-compatible.example/v1";
     await expect(client.run(repository)).rejects.toThrow("scan reached");
 
     expect(selectedKeys).toEqual(["first-key", "second-key"]);
+    expect(selectedBaseUrls).toEqual([
+      "https://first-compatible.example/v1",
+      "https://second-compatible.example/v1",
+    ]);
     await client.close();
   });
 

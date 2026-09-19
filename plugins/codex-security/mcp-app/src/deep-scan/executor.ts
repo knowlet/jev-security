@@ -59,6 +59,11 @@ export class CodexSdkWorkerExecutor implements CodexWorkerExecutor {
       const reasoningSummary = await (this.runtimeReasoningSummary ??= workerReasoningSummary(childEnv));
       const openAiApiKey = environmentVariable(childEnv, "OPENAI_API_KEY", process.platform)?.trim();
       const codexApiKey = environmentVariable(childEnv, "CODEX_API_KEY", process.platform)?.trim();
+      const openAiBaseUrl = environmentVariable(
+        childEnv,
+        "OPENAI_BASE_URL",
+        process.platform
+      )?.trim();
       const codexPath = resolveCodexPath(
         childEnv,
         process.platform,
@@ -78,6 +83,7 @@ export class CodexSdkWorkerExecutor implements CodexWorkerExecutor {
       const prompt = await fs.readFile(request.promptPath, "utf8");
       const codex = new Codex({
         codexPathOverride: executablePathForSpawn(codexPath),
+        ...(openAiBaseUrl ? { baseUrl: openAiBaseUrl } : {}),
         env: childEnv,
         // Codex exec reads CODEX_API_KEY; the SDK maps apiKey to that variable.
         // Keep native credentials unless the worker has no configured account.
