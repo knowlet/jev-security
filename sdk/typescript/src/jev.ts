@@ -216,6 +216,17 @@ export function createJevChoiceClient(
           continue;
         }
 
+        if (!response.ok || signal?.aborted) {
+          // Discard unused bodies before retrying or returning an error so the
+          // underlying transport can release the response resources.
+          try {
+            // Initiate cancellation without waiting for the source's shutdown;
+            // a stalled cleanup must not delay retries or caller cancellation.
+            void response.body?.cancel().catch(() => undefined);
+          } catch {
+            // Cleanup must not replace the HTTP failure or caller abort reason.
+          }
+        }
         signal?.throwIfAborted();
         if (!response.ok) {
           const error = new CodexSecurityError(

@@ -289,3 +289,161 @@ test("accepts a tied maximum Choice distribution", async () => {
     )["route"]?.choice,
   ).toBe("review");
 });
+
+const cleanupQuestions = {
+  route: {
+    instructions: "Choose a route.",
+    criteria: { fast: "Fast path", review: "System-2" },
+  },
+};
+
+function streamingResponse(
+  status: number,
+  onCancel: () => void | Promise<void>,
+) {
+  return new Response(
+    new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode("synthetic error body"));
+      },
+      cancel: onCancel,
+    }),
+    { status },
+  );
+}
+
+test.each([401, 503])(
+  "Jev cancels HTTP %i bodies before retry waits or terminal failure",
+  async (status) => {
+    let attempts = 0;
+    let cancellations = 0;
+    const client = createJevChoiceClient(
+      { TYPESAFE_API_KEY: "synthetic-typesafe-key" },
+      undefined,
+      async () => {
+        attempts++;
+        return streamingResponse(status, () => {
+          cancellations++;
+        });
+      },
+      {
+        wait: async () => {
+          expect(cancellations).toBe(attempts);
+        },
+      },
+    )!;
+    await expect(client.choose("state", cleanupQuestions)).rejects.toThrow(
+      `HTTP ${status}`,
+    );
+    expect(attempts).toBe(status === 401 ? 1 : 3);
+    expect(cancellations).toBe(attempts);
+  },
+);
+
+test("Jev disposes a failed response before retrying successfully", async () => {
+  let attempts = 0;
+  let cancellations = 0;
+  const client = createJevChoiceClient(
+    { TYPESAFE_API_KEY: "synthetic-typesafe-key" },
+    undefined,
+    async () => {
+      if (++attempts === 1)
+        return streamingResponse(503, () => {
+          cancellations++;
+        });
+      expect(cancellations).toBe(1);
+      return Response.json({
+        answers: {
+          route: {
+            type: "choice",
+            choice: "fast",
+            probabilities: { fast: 1, review: 0 },
+            confidence: 1,
+          },
+        },
+      });
+    },
+    { wait: async () => undefined },
+  )!;
+  expect(
+    (await client.choose("state", cleanupQuestions))["route"]?.choice,
+  ).toBe("fast");
+  expect(attempts).toBe(2);
+  expect(cancellations).toBe(1);
+});
+
+test.each([200, 503])(
+  "Jev cancels an HTTP %i body received after caller abort",
+  async (status) => {
+    const controller = new AbortController();
+    const reason = new Error("synthetic caller abort");
+    let cancellations = 0;
+    let waits = 0;
+    const client = createJevChoiceClient(
+      { TYPESAFE_API_KEY: "synthetic-typesafe-key" },
+      controller.signal,
+      async () => {
+        controller.abort(reason);
+        return streamingResponse(status, () => {
+          cancellations++;
+        });
+      },
+      {
+        wait: async () => {
+          waits++;
+        },
+      },
+    )!;
+    await expect(client.choose("state", cleanupQuestions)).rejects.toBe(reason);
+    expect(cancellations).toBe(1);
+    expect(waits).toBe(0);
+  },
+);
+
+test("Jev preserves HTTP failure when response cleanup rejects", async () => {
+  let cancellations = 0;
+  const client = createJevChoiceClient(
+    { TYPESAFE_API_KEY: "synthetic-typesafe-key" },
+    undefined,
+    async () =>
+      streamingResponse(401, () => {
+        cancellations++;
+        throw new Error("synthetic cleanup failure");
+      }),
+  )!;
+  await expect(client.choose("state", cleanupQuestions)).rejects.toThrow(
+    "HTTP 401",
+  );
+  expect(cancellations).toBe(1);
+});
+
+test.each([
+  [401, false],
+  [503, false],
+  [200, true],
+  [503, true],
+] as const)(
+  "Jev does not wait for stalled HTTP %i cleanup (caller aborted: %p)",
+  async (status, abort) => {
+    const controller = new AbortController();
+    const reason = new Error("synthetic caller abort");
+    let cancellations = 0;
+    const client = createJevChoiceClient(
+      { TYPESAFE_API_KEY: "synthetic-typesafe-key" },
+      controller.signal,
+      async () => {
+        if (abort) controller.abort(reason);
+        return streamingResponse(status, () => {
+          cancellations++;
+          return new Promise<void>(() => {});
+        });
+      },
+      { wait: async () => undefined },
+    )!;
+    const request = client.choose("state", cleanupQuestions);
+    if (abort) await expect(request).rejects.toBe(reason);
+    else await expect(request).rejects.toThrow(`HTTP ${status}`);
+    expect(cancellations).toBe(status === 503 && !abort ? 3 : 1);
+  },
+  1_000,
+);
