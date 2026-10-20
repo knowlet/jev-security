@@ -203,7 +203,17 @@ export class CodexReviewRunner {
         environmentEntry(environment, "OPENAI_API_KEY"),
         environmentEntry(environment, "CODEX_API_KEY"),
       ].find((value) => value?.trim());
+      const openAiBaseUrl = environmentEntry(
+        environment,
+        "OPENAI_BASE_URL",
+      )?.trim();
       const args = ["app-server", "--stdio", "--disable", "plugins"];
+      if (openAiBaseUrl) {
+        args.push(
+          "--config",
+          `openai_base_url=${JSON.stringify(openAiBaseUrl)}`,
+        );
+      }
       const config = await readCodexHomeConfig(environment, this.signal);
       if (hasCommandAuth(config)) {
         args.push(

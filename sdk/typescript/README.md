@@ -911,6 +911,10 @@ restrictions.
 | Variable                                                                    | Effect                                                                                                    |
 | --------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
 | `OPENAI_API_KEY`, `CODEX_API_KEY`                                           | Scan credentials; `OPENAI_API_KEY` wins if both are set.                                                  |
+| `OPENAI_BASE_URL`                                                           | Optional built-in OpenAI provider base URL; must expose an OpenAI-compatible Responses API.               |
+| `TYPESAFE_API_KEY`                                                          | Enables TypeSafe Jev for bounded dedupe and rubric-severity decisions.                                    |
+| `TYPESAFE_BASE_URL`                                                         | Optional TypeSafe API root; defaults to `https://api.typesafe.ai`.                                        |
+| `TYPESAFE_DEFAULT_MODEL`                                                    | Optional Jev model override; defaults to `jev-latest`.                                                    |
 | `CODEX_SECURITY_EMBEDDINGS_URL`                                             | Findings service endpoint; see [Embeddings and storage](#embeddings-and-storage).                         |
 | `CODEX_SECURITY_LINEAR_TEAM`, `CODEX_SECURITY_LINEAR_PROJECT`               | Default team and project for completed-scan publication.                                                  |
 | `CODEX_SECURITY_LINEAR_API_KEY`                                             | Personal API key for Linear patching and direct publication.                                              |
@@ -926,6 +930,12 @@ restrictions.
 | `CODEX_SECURITY_NPM_REGISTRY`, `npm_config_registry`, `NPM_CONFIG_REGISTRY` | Update-check registry, in precedence order.                                                               |
 | `CI`                                                                        | Disables interactive update notices.                                                                      |
 | `NO_COLOR`, `TERM`                                                          | Disables colored scan history when `NO_COLOR` is defined or `TERM=dumb`.                                  |
+
+Setting `TYPESAFE_API_KEY` opts these decision inputs into the configured
+TypeSafe endpoint: dedupe screening sends the participating finding records,
+and rubric severity sends the report plus the supplied rubric and knowledge-base
+context. Leave the key unset to keep those stages on the existing Codex paths
+without TypeSafe data egress.
 
 Custom Codex executables need thread source attribution for `exec` and
 `app-server` (Codex 0.149.1+). On Windows, use a native `.exe` or `.com`;
@@ -1308,10 +1318,22 @@ Omitting `--rubric` inherits each finding's existing severity without a model ca
 `--rubric PATH` supplies the classification policy. Repeat `--knowledge-base PATH`
 to provide supporting architecture, deployment, or business context. Both accept
 the same UTF-8 text, PDF, DOCX, and directory inputs as scan knowledge bases.
-Rubric classification uses the full supplied report and context in a separate
-read-only Codex turn per finding, without source inspection, tools, or new
-validation. `--model` and `--effort` select the classification model and reasoning
-effort; otherwise Codex's configured model and the helper's medium effort apply.
+When `TYPESAFE_API_KEY` is set, rubric classification sends only the supplied
+rubric, context, and report to TypeSafe Jev for the bounded
+`excluded | critical | high | medium | low | informational | review` decision.
+Jev does not generate the assessment text: for a concrete Jev severity, the
+same Jev request also selects the qualitative confidence band, while a separate
+read-only Codex turn can only supply `rubricLabel`, `rationale`, and
+`reviewTrigger`; its output schema cannot change the selected decision, level,
+or confidence. A Jev `review` choice explicitly escalates to the previous full
+Codex classifier. If no TypeSafe key is configured, the existing Codex path is
+used unchanged. Once Jev is configured, transient transport/HTTP or malformed
+response failures are retried by the Jev client; exhausted retries fail the
+classification rather than silently changing decision engines. No source
+inspection, tools, or new validation are allowed in either path. `--model` and
+`--effort` select the Codex explanation/System-2 fallback model and reasoning
+effort. TypeSafe follows `TYPESAFE_BASE_URL` and `TYPESAFE_DEFAULT_MODEL` when
+set, otherwise it uses `https://api.typesafe.ai` and `jev-latest`.
 
 The result contains one assessment per selected finding:
 
@@ -1320,8 +1342,9 @@ The result contains one assessment per selected finding:
 - `rubricLabel`: the policy's original label, such as `URGENT`, normalized to
   `critical`; null for inherited severity or exclusions.
 - `rationale`, separate `confidence`, and `reviewTrigger` describing a missing
-  fact that would change the classification. Inherited severity has no new
-  classification-confidence judgment.
+  fact that would change the classification. With Jev enabled, the confidence
+  band is a Jev decision rather than generated explanation text. Inherited
+  severity has no new classification-confidence judgment.
 - `findingId`, `occurrenceId`, and `inputSha256` binding the assessment to the
   report. Top-level metadata includes `assessedAt`, `rubricSha256`, and
   `knowledgeBaseSha256` for the supplied policy and context snapshots.
@@ -1964,8 +1987,15 @@ console.log(receipt.repositoryId, receipt.findingIds);
 Publish the scan with `--to custom` (or import it through the bulk API with its
 `repositoryId`) before deduplicating. The
 workflow reads a completed saved scan, queries candidates by finding ID, and
-runs Luna and Sol in the calling SDK/CLI process. Once all reviews finish,
-it posts accepted groups to the service. It does not re-upload findings or
+runs its decision stages in the calling SDK/CLI process. With
+`TYPESAFE_API_KEY`, Jev replaces the bounded Luna SAME/DISTINCT screening and
+may return `REVIEW` to escalate an ambiguous pair. The source-grounded final
+pair review remains Sol because it must inspect evidence and, for SAME findings,
+generate a lossless merged finding. If Jev is not configured, screening uses the
+existing Luna path. Once Jev is configured, request/response failures are retried
+and then fail deduplication if still unsuccessful; only `REVIEW` escalates the
+affected pair to Sol. Once all reviews finish, the
+workflow posts accepted groups to the service. It does not re-upload findings or
 change scan artifacts.
 
 ```bash
@@ -1975,15 +2005,16 @@ codex-security dedupe --scan SCAN_ID --findings-url http://127.0.0.1:3000 --json
 Deduplication runs up to 8 jobs concurrently by default. Set `--concurrency N`
 to choose a positive integer, or `--concurrency 1` for serial execution. The SDK
 equivalent is `concurrency: N`. Candidate neighborhoods are fetched first, with
-the same concurrency limit. Luna screenings and ready Sol pair reviews then use
-two queues sharing one worker pool, with at most 8 jobs running in total by
-default. Each available worker takes a ready job as soon as its current job
-finishes; it does not wait for a batch to finish.
+the same concurrency limit. Screening jobs (Jev when configured, otherwise Luna)
+and ready Sol pair reviews then use two queues sharing one worker pool, with at
+most 8 jobs running in total by default. Each available worker takes a ready job
+as soon as its current job finishes; it does not wait for a batch to finish.
 
-A Sol pair review becomes ready once every Luna screening covering that pair
-has finished and none voted `DISTINCT`. It can run while unrelated Luna
-screenings continue. Results are combined in input order so completion timing
-does not change the groups.
+A Sol pair review becomes ready once every screening covering that pair has
+finished and none voted `DISTINCT`. Jev `REVIEW` is an abstention, so it keeps
+the pair eligible for Sol instead of inventing a confidence threshold. Pair review
+can run while unrelated screenings continue. Results are combined in input order
+so completion timing does not change the groups.
 
 An explicit model refusal keeps the affected pairs separate and allows unrelated
 reviews to continue. It is recorded as `NO_DECISION`, not a reviewed `DISTINCT`
@@ -2182,10 +2213,13 @@ resolving the refusal, run dedupe without that workflow ID or with a new one.
 
 Checkpoints bind to the exact original records and ordering, approved source path,
 Git revision and current file contents (including ignored files), repository scope,
-model and reasoning settings, Codex configuration and version, and prompt/contract version. Changed
-inputs cause a new review rather than reusing a decision. Source changes during
-review stop that attempt before group writes; restart with the same ID to review
-the changed source. Original findings, never prior rationales or merged findings,
+provider/model settings, decision input, and contract version. Jev screening
+checkpoints include the normalized TypeSafe base URL and model plus the complete
+System One questions/criteria; Codex checkpoints retain their existing model,
+reasoning, configuration, executable-version, prompt, and contract bindings.
+Changed inputs or provider settings cause a new review rather than reusing an
+incompatible decision. Source changes during review stop that attempt before
+group writes; restart with the same ID to review the changed source. Original findings, never prior rationales or merged findings,
 are supplied to later independent reviews. Source snapshots do not follow directory
 links outside the approved checkout.
 
@@ -2204,15 +2238,19 @@ use another workflow ID for a fresh review rather than changing that saved resul
    explicit all-repository scope. Use the complete stored anchor and
    candidates returned by that request. Fetch all neighborhoods before starting
    reviews so every pair's screening dependencies are known.
-2. Screen each nonempty neighborhood with `gpt-5.6-luna` at `xhigh` reasoning
-   effort. The review covers every anchor-neighbor pair; nominations between
-   neighbors are rejected.
-3. Independently review each nominated pair once with `gpt-5.6-sol` at `high`
-   reasoning effort after all Luna screenings covering that pair finish without
-   a `DISTINCT` decision. Luna and ready Sol jobs share the configured worker
+2. Screen each nonempty neighborhood with TypeSafe Jev when configured. Jev
+   returns `SAME`, `DISTINCT`, or `REVIEW`; `REVIEW` keeps the pair eligible
+   for source-grounded review. Without a TypeSafe key, use the existing
+   `gpt-5.6-luna` `xhigh` screening. With Jev enabled, transient request or
+   malformed-response failures are retried up to three attempts and then fail the
+   workflow; they never switch the decision back to Luna. The screening covers
+   every anchor-neighbor pair; nominations between neighbors are rejected.
+3. Independently review each eligible pair once with `gpt-5.6-sol` at `high`
+   reasoning effort after all screenings covering that pair finish without a
+   `DISTINCT` decision. Screening and ready Sol jobs share the configured worker
    pool and can run together. Only accepted pairs contribute to duplicate groups.
-4. Group accepted duplicate pairs transitively unless a Luna or Sol `DISTINCT`
-   decision contradicts the resulting component. Contradicted components are
+4. Group accepted duplicate pairs transitively unless a screening or Sol
+   `DISTINCT` decision contradicts the resulting component. Contradicted components are
    split deterministically, preferring legal subgroups that preserve more
    accepted-pair support. There is no additional whole-group review.
 5. Post all accepted groups to `/v1/dedupe-groups`. Return a completed result
@@ -2459,8 +2497,10 @@ server API does not start a listener.
 
 The local workflow lives under `src/deduplication/`. `FindingDeduplicator`
 receives a candidate API client and a `DeduplicationReviewer`, keeping grouping
-separate from HTTP and model transport. `CodexDeduplicationReviewer` owns prompts
-and result validation; `CodexReviewRunner` owns app-server sessions and cleanup.
+separate from HTTP and model transport. `CodexDeduplicationReviewer` owns the
+hybrid Jev screening / Codex pair-review contract and result validation;
+`CodexReviewRunner` owns app-server sessions and cleanup. The shared
+`src/jev.ts` client owns the TypeSafe System One HTTP boundary.
 `deduplicateScan` validates saved scan artifacts before running the workflow;
 `deduplicateScanDirectory` performs the same validation for an explicit sealed
 scan directory without consulting local scan history.

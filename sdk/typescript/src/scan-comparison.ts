@@ -576,10 +576,15 @@ async function startReadOnlyCodexThread(
       : undefined;
   const command =
     environment === undefined ? undefined : resolveCodexCommand(environment);
+  const baseUrl =
+    environment === undefined
+      ? undefined
+      : environmentEntry(environment, "OPENAI_BASE_URL")?.trim() || undefined;
   const codex =
     options.codex ??
     new Codex({
       codexPathOverride: executablePathForSpawn(command!.command),
+      ...(baseUrl === undefined ? {} : { baseUrl }),
       env: environment,
       // The SDK forwards its apiKey option as CODEX_API_KEY for Codex exec.
       apiKey:

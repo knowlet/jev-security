@@ -103,6 +103,13 @@ const transportCases: {
     name: "command auth with ambient API key and relative home",
     commandAuth: "ambient",
   },
+  {
+    scenario: "correction",
+    name: "OpenAI-compatible base URL",
+    extraEnvironment: {
+      OPENAI_BASE_URL: "https://compatible.example/v1",
+    },
+  },
   { scenario: "retry-correction" },
   { scenario: "text-only-correction" },
   { scenario: "cancel-continuation" },
@@ -418,6 +425,11 @@ for (const {
               ? [1000]
               : [],
       );
+      if (extraEnvironment?.["OPENAI_BASE_URL"]) {
+        expect(args).toContain(
+          `openai_base_url=${JSON.stringify(extraEnvironment["OPENAI_BASE_URL"])}`,
+        );
+      }
       if (commandAuth) {
         expect(args).not.toContain('cli_auth_credentials_store="ephemeral"');
         const providers = parse(

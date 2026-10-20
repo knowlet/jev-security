@@ -5,6 +5,7 @@ import { expect, test } from "bun:test";
 import Ajv2020 from "ajv/dist/2020.js";
 import type { Finding, FindingsDocument } from "../src/models.js";
 import type { CodexReview } from "../src/deduplication/codex-review.js";
+import { CheckpointedReviewRunner } from "../src/deduplication/checkpointed-review.js";
 import {
   contradictionFreeSubgroups,
   FindingDeduplicator,
@@ -21,6 +22,7 @@ import {
 } from "../src/deduplication/deduplication-reviewer.js";
 import { CodexSecurityError, DeduplicationReviewError } from "../src/errors.js";
 import { FindingsClient } from "../src/findings-client.js";
+import { FindingWorkflow } from "../src/finding-workflow.js";
 import { deduplicateScanDirectory } from "../src/index.js";
 import {
   deduplicateScanDirectoryInternal,
@@ -28,6 +30,8 @@ import {
 } from "../src/deduplication/scan.js";
 import { PLUGIN_ROOT } from "./plugin-root.js";
 import type { JsonObject } from "../src/config.js";
+import type { JevChoiceClient } from "../src/jev.js";
+import { checkpointWorkbench } from "./support/workbench-fakes.js";
 
 const document: FindingsDocument = JSON.parse(
   await readFile(
@@ -100,6 +104,204 @@ function screening(
     decisions: Object.fromEntries(decisions.reverse()),
   };
 }
+
+test("Jev handles bounded dedupe screening without invoking Codex", async () => {
+  const findings = [entry(1), entry(2), entry(3)];
+  let codexCalls = 0;
+  let jevQuestions: Readonly<Record<string, unknown>> | undefined;
+  const reviewer = new CodexDeduplicationReviewer(
+    {
+      async run<T>(_review: CodexReview<T>): Promise<T> {
+        codexCalls++;
+        throw new Error("Codex screening should not run");
+      },
+    },
+    {
+      metadata: {
+        provider: "typesafe-system-one",
+        baseURL: "https://typesafe.example",
+        model: "jev-test",
+      },
+      async choose(_state, questions) {
+        jevQuestions = questions;
+        return {
+          "pair-1": {
+            choice: "REVIEW",
+            probabilities: { SAME: 0.2, DISTINCT: 0.2, REVIEW: 0.6 },
+            confidence: 0.4,
+          },
+          "pair-2": {
+            choice: "DISTINCT",
+            probabilities: { SAME: 0.05, DISTINCT: 0.9, REVIEW: 0.05 },
+            confidence: 0.85,
+          },
+        };
+      },
+    },
+  );
+  const result = await reviewer.screen(findings);
+  expect(codexCalls).toBe(0);
+  expect(Object.keys(jevQuestions ?? {})).toEqual(["pair-1", "pair-2"]);
+  expect(result.decisions["pair-1"]!.decision).toBe("REVIEW");
+  expect(result.decisions["pair-2"]!.decision).toBe("DISTINCT");
+  expect(result.decisions["pair-1"]!.rationale).toContain("Jev screening");
+});
+
+test("Jev screening failures fail without Luna fallback", async () => {
+  const findings = [entry(1), entry(2)];
+  const failure = new Error("synthetic Jev outage");
+  let codexCalls = 0;
+  const reviewer = new CodexDeduplicationReviewer(
+    {
+      async run<T>(_review: CodexReview<T>): Promise<T> {
+        codexCalls++;
+        throw new Error("Codex screening must not run after Jev failure.");
+      },
+    },
+    {
+      metadata: {
+        provider: "typesafe-system-one",
+        baseURL: "https://typesafe.example",
+        model: "jev-test",
+      },
+      async choose() {
+        throw failure;
+      },
+    },
+  );
+
+  await expect(reviewer.screen(findings)).rejects.toBe(failure);
+  expect(codexCalls).toBe(0);
+});
+
+test("REVIEW screening candidates continue to source-grounded pair review", async () => {
+  const findings = [entry(1), entry(2)];
+  let pairReviews = 0;
+  const result = await new FindingDeduplicator(candidates(findings), {
+    async screen() {
+      return {
+        decisions: {
+          "pair-1": {
+            decision: "REVIEW",
+            rationale: "Source-grounded review is required.",
+          },
+        },
+      };
+    },
+    async reviewPair(assigned) {
+      pairReviews++;
+      return same(assigned);
+    },
+  }).run([findings[0]!.findingId]);
+  expect(pairReviews).toBe(1);
+  expect(result.duplicateGroups).toEqual([
+    [findings[0]!.findingId, findings[1]!.findingId],
+  ]);
+});
+
+test("workflow resume reuses Jev screening and completed pair checkpoints", async () => {
+  const findings = [entry(1), entry(2), entry(3)];
+  const ids = findings.map((finding) => finding.findingId);
+  const pairAB = pairKey(ids.slice(0, 2));
+  const pairAC = pairKey([ids[0]!, ids[2]!]);
+  const source: JsonObject = {
+    repository: "/synthetic/repository",
+    revision: "synthetic-revision",
+    refsDigest: "synthetic-refs",
+    content: "synthetic-content",
+  };
+  const workbench = checkpointWorkbench("jev-resume", source);
+  const workflow = new FindingWorkflow(
+    "jev-resume",
+    process.env,
+    workbench.run,
+  );
+  let failAC = true;
+  const pairCalls: string[] = [];
+  const rawRunner = {
+    async run<T>(review: CodexReview<T>): Promise<T> {
+      if (review.stage !== "pair-review") {
+        throw new Error("Jev screening should not fall back to Codex.");
+      }
+      const assigned = findings.filter((finding) =>
+        review.prompt.includes(finding.findingId),
+      );
+      const key = pairKey(assigned.map((finding) => finding.findingId));
+      pairCalls.push(key);
+      if (key === pairAC && failAC) {
+        throw new CodexSecurityError("Synthetic A/C pair review failure.");
+      }
+      return review.validate(same(assigned));
+    },
+  };
+  const checkpoints = new CheckpointedReviewRunner(
+    workflow,
+    rawRunner,
+    source,
+    { allRepositories: true },
+    "synthetic-codex-settings",
+  );
+  let jevCalls = 0;
+  const jev: JevChoiceClient = {
+    metadata: {
+      provider: "typesafe-system-one" as const,
+      baseURL: "https://typesafe.example",
+      model: "jev-test",
+    },
+    async choose(_state, questions) {
+      jevCalls++;
+      return Object.fromEntries(
+        Object.keys(questions).map((slot) => [
+          slot,
+          {
+            choice: jevCalls === 1 ? "SAME" : "DISTINCT",
+            probabilities:
+              jevCalls === 1
+                ? { SAME: 1, DISTINCT: 0, REVIEW: 0 }
+                : { SAME: 0, DISTINCT: 1, REVIEW: 0 },
+            confidence: 1,
+          },
+        ]),
+      );
+    },
+  };
+  const reviewer = new CodexDeduplicationReviewer(checkpoints, jev);
+  const deduplicator = new FindingDeduplicator(
+    candidates(findings),
+    reviewer,
+    undefined,
+    1,
+  );
+
+  await expect(deduplicator.run([ids[0]!])).rejects.toThrow(
+    "Synthetic A/C pair review failure.",
+  );
+  expect(jevCalls).toBe(1);
+  expect(pairCalls).toEqual([pairAB, pairAC]);
+
+  failAC = false;
+  const result = await deduplicator.run([ids[0]!]);
+  expect(jevCalls).toBe(1);
+  expect(pairCalls).toEqual([pairAB, pairAC, pairAC]);
+  expect(result).toMatchObject({
+    uniqueFindingIds: [ids[0]],
+    duplicateGroups: [[ids[0], ids[1], ids[2]]],
+    deduplicationStatus: "completed",
+  });
+
+  const bindings = workbench.saved.map(
+    (saved) => saved["binding"] as JsonObject,
+  );
+  expect(bindings[0]).toMatchObject({
+    provider: "typesafe-system-one",
+    model: "jev-test",
+    stage: "screening",
+    effort: "system-one",
+  });
+  expect(typeof bindings[0]?.["settingsDigest"]).toBe("string");
+  expect(typeof bindings[0]?.["promptDigest"]).toBe("string");
+  expect(typeof bindings[0]?.["contractDigest"]).toBe("string");
+});
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -1035,6 +1237,17 @@ test("keeps recommendation-only screening independent from complete pair reviews
         expect(validateSchema({ decisions: decisionsWithFindingIds })).toBe(
           false,
         );
+        const reviewDecision = {
+          ...result,
+          decisions: {
+            ...result.decisions,
+            "pair-1": {
+              decision: "REVIEW",
+              rationale: "Escalate to System-2.",
+            },
+          },
+        };
+        expect(validateSchema(reviewDecision)).toBe(false);
         for (const field of ["canonicalFindingId", "mergedFinding"] as const) {
           const invalid = {
             decisions: Object.fromEntries(
