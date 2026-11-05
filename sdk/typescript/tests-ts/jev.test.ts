@@ -297,6 +297,56 @@ const cleanupQuestions = {
   },
 };
 
+test.each([true, false])(
+  "Jev honors caller abort after body resolution (valid answer: %p)",
+  async (validAnswer) => {
+    const controller = new AbortController();
+    const reason = new Error("synthetic caller abort after body resolution");
+    const body = Promise.withResolvers<unknown>();
+    const reading = Promise.withResolvers<void>();
+    let attempts = 0;
+    let waits = 0;
+    const client = createJevChoiceClient(
+      { TYPESAFE_API_KEY: "synthetic-typesafe-key" },
+      controller.signal,
+      async () => {
+        attempts++;
+        const response = new Response(null, { status: 200 });
+        response.json = () => {
+          reading.resolve();
+          return body.promise;
+        };
+        return response;
+      },
+      {
+        wait: async () => {
+          waits++;
+        },
+      },
+    )!;
+    const request = client.choose("state", cleanupQuestions);
+    await reading.promise;
+    body.resolve({
+      answers: {
+        route: validAnswer
+          ? {
+              type: "choice",
+              choice: "fast",
+              probabilities: { fast: 1, review: 0 },
+              confidence: 1,
+            }
+          : { type: "choice" },
+      },
+    });
+    // The body is already resolved when cancellation arrives, so the transport
+    // can no longer reject it. The client must check before accepting it.
+    controller.abort(reason);
+    await expect(request).rejects.toBe(reason);
+    expect(attempts).toBe(1);
+    expect(waits).toBe(0);
+  },
+);
+
 function streamingResponse(
   status: number,
   onCancel: () => void | Promise<void>,

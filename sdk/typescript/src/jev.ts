@@ -241,6 +241,7 @@ export function createJevChoiceClient(
 
         try {
           const payload = await response.json();
+          signal?.throwIfAborted();
           if (
             payload === null ||
             typeof payload !== "object" ||
