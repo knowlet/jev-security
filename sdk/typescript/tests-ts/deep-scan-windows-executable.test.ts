@@ -140,6 +140,7 @@ test.each([
       const allowed = new Set(
         configuration.mcpServers["codex-security"]!.env_vars,
       );
+      expect(allowed.has("OPENAI_BASE_URL")).toBe(true);
       const environment = Object.fromEntries(
         Object.entries({
           PATH: "",

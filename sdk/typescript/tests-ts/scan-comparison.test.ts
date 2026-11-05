@@ -391,11 +391,13 @@ describe("semantic scan comparison", () => {
       CODEX_HOME: home,
       CODEX_CLI_PATH: executable,
       OPENAI_API_KEY: "synthetic-key",
+      OPENAI_BASE_URL: "https://compatible.example/v1",
     };
     const { codex } = fakeCodex({ matches: [], uncertain: [] });
     let config: CodexOptions["config"];
     let codexPath: string | undefined;
     let codexEnvironment: CodexOptions["env"];
+    let codexBaseUrl: string | undefined;
     const startThread = spyOn(
       Codex.prototype,
       "startThread",
@@ -403,8 +405,10 @@ describe("semantic scan comparison", () => {
       config = (this as unknown as { options: CodexOptions }).options.config;
       codexPath = (this as unknown as { options: CodexOptions }).options
         .codexPathOverride;
-      codexEnvironment = (this as unknown as { options: CodexOptions }).options
-        .env;
+      const capturedOptions = (this as unknown as { options: CodexOptions })
+        .options;
+      codexEnvironment = capturedOptions.env;
+      codexBaseUrl = capturedOptions.baseUrl;
       return codex.startThread(options!) as ReturnType<Codex["startThread"]>;
     });
     try {
@@ -432,6 +436,7 @@ describe("semantic scan comparison", () => {
           : executable,
       );
       expect(codexEnvironment?.["CODEX_CLI_PATH"]).toBe(executable);
+      expect(codexBaseUrl).toBe("https://compatible.example/v1");
       const effective = await runCodexCommand(
         resolveCodexCommand(environment),
         [

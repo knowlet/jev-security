@@ -689,11 +689,12 @@ async function testOpenAiCredentialsReachWorker() {
   for (const entry of cases) {
     const fixture = await fakeCodexFixture(emptyWorkerPermissionProfile, true, entry.accountResult ?? noAccount);
     const previousEnvironment = Object.fromEntries(
-      ["OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_CLI_PATH", "CODEX_HOME"].map((name) => [name, process.env[name]])
+      ["OPENAI_API_KEY", "OPENAI_BASE_URL", "CODEX_API_KEY", "CODEX_CLI_PATH", "CODEX_HOME"].map((name) => [name, process.env[name]])
     );
     const originalSpawn = childProcess.spawn;
     try {
       restoreEnv("OPENAI_API_KEY", entry.openai);
+      restoreEnv("OPENAI_BASE_URL", "https://compatible.example/v1");
       restoreEnv("CODEX_API_KEY", entry.codex);
       process.env.CODEX_CLI_PATH = process.execPath;
       process.env.CODEX_HOME = fixture.root;
@@ -724,6 +725,12 @@ async function testOpenAiCredentialsReachWorker() {
           assert.equal(invocation.codexHome, fixture.root);
           assert.equal(invocation.openaiAuthentication.CODEX_API_KEY, entry.expected);
           assert.equal(invocation.openaiAuthentication.OPENAI_API_KEY, entry.openai);
+          assert.equal(
+            invocation.argv.includes(
+              'openai_base_url="https://compatible.example/v1"'
+            ),
+            true
+          );
           assert.equal(process.env.CODEX_API_KEY, entry.codex);
           assert.equal(process.env.OPENAI_API_KEY, entry.openai);
           assert.equal(invocation.argv.some((arg) => arg.includes("synthetic-")), false);

@@ -2685,10 +2685,17 @@ export class CodexSecurity {
         sdkEnvironment,
       );
     }
+    // Read the endpoint from the same environment that supplied apiKey so a
+    // rotated OPENAI_BASE_URL applies to the next scan with its rotated key.
+    const openAiBaseUrl = environmentValue(
+      session.scanEnvironment,
+      "OPENAI_BASE_URL",
+    )?.trim();
     const codex = this.#dependencies.createCodex({
       ...(codexPathOverride === undefined
         ? {}
         : { codexPathOverride: executablePathForSpawn(codexPathOverride) }),
+      ...(openAiBaseUrl === undefined ? {} : { baseUrl: openAiBaseUrl }),
       ...(externalProvider !== null || apiKey === null ? {} : { apiKey }),
       ...(commandAuth || configOverrides.length > 0
         ? {
